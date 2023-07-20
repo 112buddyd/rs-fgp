@@ -1,4 +1,5 @@
 use crate::components::{Components, LED_COUNT};
+use colorgrad::Gradient;
 use esp_idf_hal::delay::FreeRtos;
 use rand::seq::SliceRandom;
 use smart_leds::RGB8;
@@ -13,7 +14,13 @@ const GREEN: RGB8 = RGB8::new(0, 255, 0);
 const YELLOW: RGB8 = RGB8::new(255, 255, 0);
 const RED: RGB8 = RGB8::new(255, 0, 0);
 const BLANK: RGB8 = RGB8::new(0, 0, 0);
+const FPS: u8 = 100;
 
+enum MoleStatus {
+    STOPPED,
+    RUNNING,
+    ESCAPED,
+}
 pub struct Mole<'a> {
     components: Components<'a>,
     score: u8,
@@ -26,6 +33,8 @@ pub struct Mole<'a> {
     round_num: u8,
     hits: u8,
     lives: u8,
+    last_frame: u128,
+    color_gradient: Gradient,
 }
 
 impl Mole<'_> {
@@ -42,6 +51,11 @@ impl Mole<'_> {
             round_num: 1,
             hits: 0,
             lives: 5,
+            last_frame: 0,
+            color_gradient: colorgrad::CustomGradient::new()
+                .html_colors(&["green", "red"])
+                .build()
+                .unwrap(),
         }
     }
 
@@ -49,36 +63,48 @@ impl Mole<'_> {
         self.components.time.elapsed().as_millis() - ms
     }
 
-    fn mole_is_running(&self, idx: usize) -> bool {
-        !self.mole_is_stopped(idx) && self.mole_timers[idx] != 0
+    fn get_mole_status(&self, idx: usize) -> MoleStatus {
+        let mole = self.mole_timers[idx];
+        if mole == 0 {
+            MoleStatus::STOPPED
+        } else if self.time_diff(mole) > self.mole_escape_ms {
+            MoleStatus::ESCAPED
+        } else {
+            MoleStatus::RUNNING
+        }
     }
 
-    fn mole_is_stopped(&self, idx: usize) -> bool {
-        self.mole_timers[idx] == 0
+    fn render_moles(&mut self) -> Option<Vec<String>> {
+        if self.time_diff(self.last_frame) < (1000 / FPS as u128) {
+            return None;
+        }
+        // using interpolation color moles based on how close they are to expiring
+        let pixels: Vec<String> = self
+            .mole_timers
+            .iter()
+            .enumerate()
+            .map(|(i, mole)| match self.get_mole_status(i) {
+                MoleStatus::RUNNING => {
+                    let diff = self.time_diff(*mole) as f64 / self.mole_escape_ms as f64;
+                    self.color_gradient.at(diff).to_rgb_string()
+                }
+                _ => "0 0 0 0".to_string(),
+            })
+            .collect();
+        self.last_frame = self.components.time.elapsed().as_millis();
+        Some(pixels)
     }
 
-    fn mole_has_escaped(&self, idx: &usize) -> bool {
-        !self.mole_is_stopped(*idx) && self.time_diff(self.mole_timers[*idx]) > self.mole_escape_ms
-    }
-
-    fn render_moles(&self) {
-        unimplemented!()
-        //   // using interpolation color moles based on how close they are to expiring
-        //   if ((millis() - lastFrame) < 1000 / FPS) {
-        //     return;
-        //   }
-        //   for (int i=0; i<LED_COUNT; i++) {
-        //     if (mole_is_running(i)) {
-        //       unsigned long delta = millis() - moleTimers[i];
-        //       leds[i].red = colorOne.red * (moleEscapeMs - delta) / moleEscapeMs + colorTwo.red *delta/ moleEscapeMs;
-        //       // leds[i].blue = colorOne[i].blue * (moleEscapeMs - delta) / moleEscapeMs + colorTwo[i].blue *delta/ moleEscapeMs;
-        //       leds[i].green = colorOne.green * (moleEscapeMs - delta) / moleEscapeMs + colorTwo.green *delta/ moleEscapeMs;
-        //     } else {
-        //       leds[i] = CRGB(0, 0, 0);
-        //     }
-        //   }
-        //   lastFrame = millis();
-        //   FastLED.show();
+    fn draw_moles(&mut self, rgb_strings: Vec<String>) {
+        let pixels = rgb_strings.iter().map(|s| {
+            let mut split = s.split_whitespace().into_iter();
+            RGB8::new(
+                split.next().unwrap_or("0").parse().unwrap(),
+                split.next().unwrap_or("0").parse().unwrap(),
+                split.next().unwrap_or("0").parse().unwrap(),
+            )
+        });
+        self.components.leds.write(pixels).unwrap();
     }
 
     fn spawn_random_mole(&mut self) {
@@ -103,10 +129,13 @@ impl Mole<'_> {
             return;
         }
         let key = ckey.unwrap() as usize;
-        if self.mole_is_running(key) {
-            self.hits += 1;
-            self.score += 1;
-            self.reset_mole(&key);
+        match self.get_mole_status(key) {
+            MoleStatus::RUNNING => {
+                self.hits += 1;
+                self.score += 1;
+                self.reset_mole(&key);
+            }
+            _ => (),
         }
     }
 
@@ -122,7 +151,7 @@ impl Mole<'_> {
             .mole_timers
             .iter()
             .enumerate()
-            .filter(|(i, _)| self.mole_has_escaped(&i))
+            .filter(|(i, _)| matches!(self.get_mole_status(*i), MoleStatus::ESCAPED))
             .map(|(i, _)| i)
             .collect::<Vec<usize>>();
         self.lives -= escapees.len() as u8;
@@ -191,7 +220,7 @@ impl Mole<'_> {
         }
     }
 
-    pub fn run(&mut self) -> u8 {
+    pub fn run(&mut self) {
         self.start_animation();
 
         self.spawn_timer = self.components.time.elapsed().as_millis();
@@ -202,14 +231,18 @@ impl Mole<'_> {
                 self.check_for_mole_escapes();
                 if self.lives <= 0 {
                     self.end_animation();
-                    return self.score;
+                    return;
                 }
                 if self.time_diff(self.spawn_timer) > self.spawn_speed_ms {
                     self.spawn_random_mole();
                     self.spawn_timer = self.components.time.elapsed().as_millis();
                 }
                 self.check_for_mole_hits();
-                self.render_moles();
+                let pixels = self.render_moles();
+                match pixels {
+                    Some(p) => self.draw_moles(p),
+                    _ => (),
+                }
             }
             self.hits = 0;
             self.spawn_speed_ms = (self.spawn_speed_ms as f32 * self.spawn_speed_change) as u128;
@@ -217,8 +250,6 @@ impl Mole<'_> {
             self.lives += 1;
             self.round_num += 1;
         }
-        self.end_animation();
-        self.score
     }
 
     fn draw_game_state(&mut self) {

@@ -14,10 +14,7 @@ debug = true    # Symbols are nice and they don't increase the size on Flash
 opt-level = "z"
 
 [features]
-
 default = ["std", "hal", "esp-idf-sys/native"]
-
-
 pio = ["esp-idf-sys/pio"]
 all = ["std", "nightly", "experimental", "embassy"]
 hal = ["esp-idf-hal", "embedded-svc", "esp-idf-svc"]
@@ -41,9 +38,10 @@ embedded-time = "0.12.1"
 std-embedded-time = "0.1.0"
 ws2812-esp32-rmt-driver = "0.6.0"
 smart-leds-trait = "0.2.1"
-rand = "0.8.5"
 ssd1306 = "0.8.0"
 embedded-graphics = "0.8.0"
+colorgrad = "0.6.2"
+rand = "0.8.5"
 
 [build-dependencies]
 embuild = "0.31.2"
