@@ -30,6 +30,7 @@ pub struct Components<'a> {
 
 impl Components<'_> {
     pub fn new() -> Self {
+        println!("Setting up components.");
         let peripherals = Peripherals::take().unwrap();
         let time = Instant::now();
 
@@ -47,7 +48,7 @@ impl Components<'_> {
         let keypad = Keypad::new(rows, columns);
 
         // LED
-        let leds = LedPixelEsp32Rmt::<RGB8, LedPixelColorGrb24>::new(0, 15).unwrap();
+        let leds = LedPixelEsp32Rmt::<RGB8, LedPixelColorGrb24>::new(0, 13).unwrap();
 
         // BUZZER
         let buzzer = PinDriver::output(peripherals.pins.gpio14).unwrap();

@@ -39,6 +39,7 @@ pub struct Mole<'a> {
 
 impl Mole<'_> {
     pub fn new<'a>(components: Components<'a>) -> Mole<'a> {
+        println!("Starting Mole!");
         Mole {
             components,
             score: 0,
@@ -74,36 +75,30 @@ impl Mole<'_> {
         }
     }
 
-    fn render_moles(&mut self) -> Option<Vec<String>> {
+    fn render_moles(&mut self) -> Option<Vec<[u8; 3]>> {
         if self.time_diff(self.last_frame) < (1000 / FPS as u128) {
             return None;
         }
         // using interpolation color moles based on how close they are to expiring
-        let pixels: Vec<String> = self
+        let pixels: Vec<[u8; 3]> = self
             .mole_timers
             .iter()
             .enumerate()
             .map(|(i, mole)| match self.get_mole_status(i) {
                 MoleStatus::RUNNING => {
                     let diff = self.time_diff(*mole) as f64 / self.mole_escape_ms as f64;
-                    self.color_gradient.at(diff).to_rgb_string()
+                    let color = self.color_gradient.at(diff);
+                    [color.r as u8, color.g as u8, color.b as u8]
                 }
-                _ => "0 0 0 0".to_string(),
+                _ => [0, 0, 0],
             })
             .collect();
         self.last_frame = self.components.time.elapsed().as_millis();
         Some(pixels)
     }
 
-    fn draw_moles(&mut self, rgb_strings: Vec<String>) {
-        let pixels = rgb_strings.iter().map(|s| {
-            let mut split = s.split_whitespace().into_iter();
-            RGB8::new(
-                split.next().unwrap_or("0").parse().unwrap(),
-                split.next().unwrap_or("0").parse().unwrap(),
-                split.next().unwrap_or("0").parse().unwrap(),
-            )
-        });
+    fn draw_moles(&mut self, rgb_vec: Vec<[u8; 3]>) {
+        let pixels = rgb_vec.iter().map(|s| RGB8::new(s[0], s[1], s[2]));
         self.components.leds.write(pixels).unwrap();
     }
 
@@ -120,6 +115,7 @@ impl Mole<'_> {
             return;
         }
         let new_idx = stopped.choose(&mut rand::thread_rng()).unwrap();
+        println!("Spawning at: {}", new_idx);
         self.mole_timers[*new_idx] = self.components.time.elapsed().as_millis();
     }
 
@@ -129,8 +125,10 @@ impl Mole<'_> {
             return;
         }
         let key = ckey.unwrap() as usize;
+        println!("Got key: {}", key);
         match self.get_mole_status(key) {
             MoleStatus::RUNNING => {
+                println!("Hit!");
                 self.hits += 1;
                 self.score += 1;
                 self.reset_mole(&key);
@@ -154,6 +152,7 @@ impl Mole<'_> {
             .filter(|(i, _)| matches!(self.get_mole_status(*i), MoleStatus::ESCAPED))
             .map(|(i, _)| i)
             .collect::<Vec<usize>>();
+        println!("{} escaped!", escapees.len());
         self.lives -= escapees.len() as u8;
         escapees.into_iter().for_each(|i| {
             self.reset_mole(&i);
@@ -161,6 +160,7 @@ impl Mole<'_> {
     }
 
     fn mole_game_reset(&mut self) {
+        println!("Setting up new Mole game.");
         self.score = 0;
         self.mole_timers = [0; LED_COUNT];
         self.spawn_timer = 0;
@@ -221,6 +221,7 @@ impl Mole<'_> {
     }
 
     pub fn run(&mut self) {
+        self.mole_game_reset();
         self.start_animation();
 
         self.spawn_timer = self.components.time.elapsed().as_millis();
